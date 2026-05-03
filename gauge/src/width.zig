@@ -68,6 +68,32 @@ fn binarySearchZw(cp: u21) bool {
     return false;
 }
 
+/// Returns the total display width of a UTF-8 encoded string in terminal columns.
+///
+/// Invalid UTF-8 sequences are skipped (no crash, no panic).
+/// ANSI escape sequences are NOT stripped — use width() after strip_ansi() for styled text
+/// (Phase 2), or use graphemeWidth() for full grapheme-cluster-correct measurement (Phase 3).
+pub fn width(bytes: []const u8) u32 {
+    std.debug.assert(bytes.len <= std.math.maxInt(u32));
+    var total: u32 = 0;
+    var i: u32 = 0;
+    while (i < bytes.len) {
+        const seq_len = std.unicode.utf8ByteSequenceLength(bytes[i]) catch {
+            i += 1;
+            continue;
+        };
+        const end = i + seq_len;
+        if (end > bytes.len) break;
+        const cp = std.unicode.utf8Decode(bytes[i..end]) catch {
+            i += seq_len;
+            continue;
+        };
+        total += codepointWidth(cp);
+        i = end;
+    }
+    return total;
+}
+
 const testing = std.testing;
 
 test "codepointWidth: ASCII printable" {
@@ -136,4 +162,35 @@ test "codepointWidth: emoji (base, no ZWJ)" {
 test "codepointWidth: Latin supplement stays narrow" {
     try testing.expectEqual(@as(u8, 1), codepointWidth(0x00C0)); // 'À' — East Asian Ambiguous → narrow
     try testing.expectEqual(@as(u8, 1), codepointWidth(0x00E9)); // 'é'
+}
+
+test "width: ASCII string" {
+    try testing.expectEqual(@as(u32, 5), width("Hello"));
+    try testing.expectEqual(@as(u32, 0), width(""));
+}
+
+test "width: CJK string" {
+    try testing.expectEqual(@as(u32, 4), width("你好")); // 2 wide chars = 4
+}
+
+test "width: mixed ASCII and CJK" {
+    try testing.expectEqual(@as(u32, 10), width("abc你好def")); // 3 + 4 + 3
+}
+
+test "width: emoji base codepoint" {
+    // Pre-Phase 3: emoji measured per-codepoint, no cluster context.
+    // 😀 (U+1F600) = 2 cols, space = 1, total 3.
+    try testing.expectEqual(@as(u32, 3), width("😀 "));
+}
+
+test "width: combining mark does not add columns" {
+    // 'A' + COMBINING GRAVE ACCENT: visually 'À' but two codepoints.
+    // Per-codepoint: 1 + 0 = 1.
+    try testing.expectEqual(@as(u32, 1), width("A\xcc\x80"));
+}
+
+test "width: invalid UTF-8 is skipped" {
+    // Lone continuation byte and overlong sequence — should not crash.
+    try testing.expectEqual(@as(u32, 0), width("\xFF\xFE"));
+    try testing.expectEqual(@as(u32, 1), width("A\xFF"));
 }
