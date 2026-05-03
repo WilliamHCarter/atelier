@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig 0.14.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Build
+        run: cd gauge && zig build
+
+      - name: Test
+        run: cd gauge && zig build test
