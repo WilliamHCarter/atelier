@@ -82,7 +82,10 @@ pub fn stripAnsi(allocator: std.mem.Allocator, bytes: []const u8) std.mem.Alloca
     const buf = try allocator.alloc(u8, bytes.len);
     const stripped = stripAnsiIntoBuf(bytes, buf);
     // Resize to exact length to avoid wasting memory.
-    const result = allocator.realloc(buf, stripped.len) catch buf[0..stripped.len];
+    const result = allocator.realloc(buf, stripped.len) catch |err| {
+        allocator.free(buf);
+        return err;
+    };
     std.debug.assert(result.len <= bytes.len); // postcondition: output no longer than input
     return result;
 }
@@ -137,4 +140,15 @@ test "stripAnsi: allocating version" {
     const result = try stripAnsi(testing.allocator, "\x1b[1;32mGreen\x1b[0m");
     defer testing.allocator.free(result);
     try testing.expectEqualStrings("Green", result);
+}
+
+test "stripAnsi: frees input-sized buffer when shrink realloc fails" {
+    var failing_allocator = testing.FailingAllocator.init(testing.allocator, .{
+        .fail_index = 1,
+        .resize_fail_index = 0,
+    });
+    const allocator = failing_allocator.allocator();
+
+    try testing.expectError(error.OutOfMemory, stripAnsi(allocator, "\x1b[1;32mGreen\x1b[0m"));
+    try testing.expectEqual(failing_allocator.allocated_bytes, failing_allocator.freed_bytes);
 }

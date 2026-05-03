@@ -1,6 +1,7 @@
 const std = @import("std");
 const tables = @import("tables.zig");
 const ansi = @import("ansi.zig");
+const grapheme_mod = @import("grapheme.zig");
 
 /// East Asian Ambiguous characters default to narrow (1 column).
 /// Named constant rather than a magic literal — see gauge-research.md §Lessons Learned #3.
@@ -64,9 +65,10 @@ fn binarySearchRanges(comptime Range: type, table: []const Range, codepoint: u21
 
 /// Returns the total display width of a UTF-8 encoded string in terminal columns.
 ///
-/// Invalid UTF-8 sequences are skipped (no crash, no panic).
-/// ANSI escape sequences are NOT stripped — use width() after strip_ansi() for styled text
-/// (Phase 2), or use graphemeWidth() for full grapheme-cluster-correct measurement (Phase 3).
+/// Measures at grapheme cluster granularity (UAX #29): ZWJ emoji sequences,
+/// skin-tone variants, and VS-16 presentation selectors are handled correctly.
+/// ANSI escape sequences are skipped in-place with no allocation.
+/// Invalid UTF-8 bytes are skipped gracefully.
 pub fn width(bytes: []const u8) u32 {
     std.debug.assert(bytes.len <= std.math.maxInt(u32)); // precondition: length fits in u32
 
@@ -81,22 +83,13 @@ pub fn width(bytes: []const u8) u32 {
                 continue;
             }
         }
-        const seq_len = std.unicode.utf8ByteSequenceLength(bytes[i]) catch {
-            i += 1;
-            continue;
-        };
-        const end = i + seq_len;
-        if (end > @as(u32, @intCast(bytes.len))) break;
-        const cp = std.unicode.utf8Decode(bytes[i..end]) catch {
-            i += seq_len;
-            continue;
-        };
-        total += codepointWidth(cp);
-        i = end;
+        // Advance one grapheme cluster and accumulate its display width.
+        const result = grapheme_mod.step(bytes[i..]) orelse break;
+        total += result.grapheme.width;
+        i += @intCast(result.grapheme.bytes.len);
     }
 
-    // Each UTF-8 byte contributes at most 1 column (ASCII) or 2 columns for multi-byte
-    // sequences that are at least 2 bytes long, so total can never exceed byte count.
+    // Each UTF-8 byte contributes at most 1 column, so total never exceeds byte count.
     std.debug.assert(total <= bytes.len);
     return total;
 }
