@@ -1,5 +1,6 @@
 const std = @import("std");
 const tables = @import("tables.zig");
+const ansi = @import("ansi.zig");
 
 /// East Asian Ambiguous characters default to narrow (1 column).
 /// Named constant rather than a magic literal — see gauge-research.md §Lessons Learned #3.
@@ -72,6 +73,14 @@ pub fn width(bytes: []const u8) u32 {
     var total: u32 = 0;
     var i: u32 = 0;
     while (i < bytes.len) {
+        // Skip ANSI escape sequences in-place — no allocation required.
+        if (bytes[i] == 0x1b) {
+            const seq_len = ansi.escapeSequenceLen(bytes, i);
+            if (seq_len > 0) {
+                i += seq_len;
+                continue;
+            }
+        }
         const seq_len = std.unicode.utf8ByteSequenceLength(bytes[i]) catch {
             i += 1;
             continue;
@@ -191,4 +200,19 @@ test "width: invalid UTF-8 is skipped" {
     // Lone continuation byte and overlong sequence — should not crash.
     try testing.expectEqual(@as(u32, 0), width("\xFF\xFE"));
     try testing.expectEqual(@as(u32, 1), width("A\xFF"));
+}
+
+test "width: ANSI SGR sequences are ignored" {
+    try testing.expectEqual(@as(u32, 5), width("\x1b[31mHello\x1b[0m"));
+    try testing.expectEqual(@as(u32, 5), width("\x1b[1;32mHello\x1b[0m"));
+}
+
+test "width: ANSI OSC hyperlink is ignored" {
+    const input = "\x1b]8;;https://example.com\x1b\\click\x1b]8;;\x1b\\";
+    try testing.expectEqual(@as(u32, 5), width(input));
+}
+
+test "width: mixed styled and plain text" {
+    // "\x1b[31m" + "你好" + "\x1b[0m" — only CJK contributes to width
+    try testing.expectEqual(@as(u32, 4), width("\x1b[31m你好\x1b[0m"));
 }

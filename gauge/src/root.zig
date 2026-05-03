@@ -3,6 +3,8 @@
 
 pub const codepointWidth = @import("width.zig").codepointWidth;
 pub const width = @import("width.zig").width;
+pub const stripAnsi = @import("ansi.zig").stripAnsi;
+pub const stripAnsiIntoBuf = @import("ansi.zig").stripAnsiIntoBuf;
 
 test {
     @import("std").testing.refAllDecls(@This());
