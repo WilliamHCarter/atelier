@@ -1,0 +1,11 @@
+.{
+    .name = .gauge,
+    .version = "0.0.0",
+    .fingerprint = 0x2bf40e2ab4ad2287,
+    .minimum_zig_version = "0.14.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
