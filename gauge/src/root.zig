@@ -3,6 +3,7 @@
 
 const tables = @import("tables.zig");
 pub const codepointWidth = @import("width.zig").codepointWidth;
+pub const width = @import("width.zig").width;
 
 test {
     @import("std").testing.refAllDecls(@This());
