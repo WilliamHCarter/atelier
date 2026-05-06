@@ -1,5 +1,10 @@
 const std = @import("std");
 
+pub const Error = error{
+    BufferTooSmall,
+    InputTooLarge,
+};
+
 /// Scans bytes starting at index i, which must point to the byte after ESC (0x1b).
 /// Returns the index of the first byte past the escape sequence, or i if not recognized.
 /// Handles: CSI sequences (\x1b[...final), OSC sequences (\x1b]...ST or BEL),
@@ -54,8 +59,10 @@ pub fn escapeSequenceLen(bytes: []const u8, i: u32) u32 {
 /// Copies bytes into buf, stripping all ANSI escape sequences.
 /// Returns a slice of buf containing the stripped result.
 /// buf must be at least bytes.len bytes long (stripped output is always <= input).
-pub fn stripAnsiIntoBuf(bytes: []const u8, buf: []u8) []u8 {
-    std.debug.assert(buf.len >= bytes.len); // precondition: buf has enough capacity
+pub fn stripAnsiIntoBuf(bytes: []const u8, buf: []u8) Error![]u8 {
+    if (bytes.len > std.math.maxInt(u32)) return error.InputTooLarge;
+    if (buf.len < bytes.len) return error.BufferTooSmall;
+
     var src: u32 = 0;
     var dst: u32 = 0;
     while (src < bytes.len) {
@@ -76,11 +83,12 @@ pub fn stripAnsiIntoBuf(bytes: []const u8, buf: []u8) []u8 {
 
 /// Allocates and returns a copy of bytes with all ANSI escape sequences removed.
 /// Caller owns the returned slice and must free it with allocator.free().
-pub fn stripAnsi(allocator: std.mem.Allocator, bytes: []const u8) std.mem.Allocator.Error![]u8 {
-    std.debug.assert(bytes.len <= std.math.maxInt(u32)); // precondition: length fits in u32
+pub fn stripAnsi(allocator: std.mem.Allocator, bytes: []const u8) (std.mem.Allocator.Error || Error)![]u8 {
+    if (bytes.len > std.math.maxInt(u32)) return error.InputTooLarge;
+
     // Stripped output is always <= input length; allocate input length to avoid a pre-scan.
     const buf = try allocator.alloc(u8, bytes.len);
-    const stripped = stripAnsiIntoBuf(bytes, buf);
+    const stripped = try stripAnsiIntoBuf(bytes, buf);
     // Resize to exact length to avoid wasting memory.
     const result = allocator.realloc(buf, stripped.len) catch |err| {
         allocator.free(buf);
@@ -119,21 +127,26 @@ test "skipEscapeSequence: OSC with ST terminator" {
 
 test "stripAnsiIntoBuf: removes SGR sequence" {
     var buf: [64]u8 = undefined;
-    const result = stripAnsiIntoBuf("\x1b[31mHello\x1b[0m", &buf);
+    const result = try stripAnsiIntoBuf("\x1b[31mHello\x1b[0m", &buf);
     try testing.expectEqualStrings("Hello", result);
 }
 
 test "stripAnsiIntoBuf: plain text unchanged" {
     var buf: [64]u8 = undefined;
-    const result = stripAnsiIntoBuf("Hello", &buf);
+    const result = try stripAnsiIntoBuf("Hello", &buf);
     try testing.expectEqualStrings("Hello", result);
 }
 
 test "stripAnsiIntoBuf: OSC hyperlink stripped" {
     var buf: [128]u8 = undefined;
     const input = "\x1b]8;;https://example.com\x1b\\click\x1b]8;;\x1b\\";
-    const result = stripAnsiIntoBuf(input, &buf);
+    const result = try stripAnsiIntoBuf(input, &buf);
     try testing.expectEqualStrings("click", result);
+}
+
+test "stripAnsiIntoBuf: reports small buffer" {
+    var buf: [4]u8 = undefined;
+    try testing.expectError(error.BufferTooSmall, stripAnsiIntoBuf("Hello", &buf));
 }
 
 test "stripAnsi: allocating version" {

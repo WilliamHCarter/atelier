@@ -5,6 +5,8 @@ const width_mod = @import("width.zig");
 
 pub const Error = error{
     BufferTooSmall,
+    InputTooLarge,
+    InvalidWidth,
     LineCapacityExceeded,
 };
 
@@ -232,9 +234,9 @@ pub fn height(bytes: []const u8) u32 {
 /// columns. Consistent with wrap: word boundaries are preferred, grapheme
 /// clusters are never split, and ANSI escape sequences contribute zero width.
 /// max_width must be greater than zero.
-pub fn textSize(bytes: []const u8, max_width: u32) TextSize {
-    std.debug.assert(bytes.len <= std.math.maxInt(u32));
-    std.debug.assert(max_width > 0);
+pub fn textSize(bytes: []const u8, max_width: u32) Error!TextSize {
+    if (bytes.len > std.math.maxInt(u32)) return error.InputTooLarge;
+    if (max_width == 0) return error.InvalidWidth;
 
     if (bytes.len == 0) return .{ .width = 0, .height = 0 };
 
@@ -261,8 +263,8 @@ pub fn truncateIntoBuf(
     ellipsis: []const u8,
     buf: []u8,
 ) Error![]const u8 {
-    std.debug.assert(bytes.len <= std.math.maxInt(u32));
-    std.debug.assert(ellipsis.len <= std.math.maxInt(u32));
+    if (bytes.len > std.math.maxInt(u32)) return error.InputTooLarge;
+    if (ellipsis.len > std.math.maxInt(u32)) return error.InputTooLarge;
 
     const ellipsis_width = width_mod.width(ellipsis);
     const source_width = width_mod.width(bytes);
@@ -323,8 +325,8 @@ pub fn wrap(
     max_width: u32,
     lines: []WrappedLine,
 ) Error![]WrappedLine {
-    std.debug.assert(bytes.len <= std.math.maxInt(u32));
-    std.debug.assert(max_width > 0);
+    if (bytes.len > std.math.maxInt(u32)) return error.InputTooLarge;
+    if (max_width == 0) return error.InvalidWidth;
 
     var ctx = WrapContext(.wrap){
         .bytes = bytes,
@@ -438,30 +440,35 @@ test "wrap: ignores ANSI width" {
     try testing.expectEqualStrings("world", lines[1].bytes);
 }
 
+test "wrap: rejects zero width" {
+    var lines_buf: [4]WrappedLine = undefined;
+    try testing.expectError(error.InvalidWidth, wrap("hello", 0, &lines_buf));
+}
+
 test "textSize: empty input" {
-    try testing.expectEqual(TextSize{ .width = 0, .height = 0 }, textSize("", 80));
+    try testing.expectEqual(TextSize{ .width = 0, .height = 0 }, try textSize("", 80));
 }
 
 test "textSize: single line fits" {
-    try testing.expectEqual(TextSize{ .width = 5, .height = 1 }, textSize("hello", 80));
+    try testing.expectEqual(TextSize{ .width = 5, .height = 1 }, try textSize("hello", 80));
 }
 
 test "textSize: wide characters" {
-    try testing.expectEqual(TextSize{ .width = 4, .height = 1 }, textSize("你好", 80));
+    try testing.expectEqual(TextSize{ .width = 4, .height = 1 }, try textSize("你好", 80));
 }
 
 test "textSize: wraps and reports max width" {
-    const size = textSize("hello world", 5);
+    const size = try textSize("hello world", 5);
     try testing.expectEqual(@as(u32, 5), size.width);
     try testing.expectEqual(@as(u32, 2), size.height);
 }
 
 test "textSize: hard newline creates second line" {
-    try testing.expectEqual(TextSize{ .width = 1, .height = 2 }, textSize("a\nb", 80));
+    try testing.expectEqual(TextSize{ .width = 1, .height = 2 }, try textSize("a\nb", 80));
 }
 
 test "textSize: ANSI sequences contribute zero width" {
-    try testing.expectEqual(TextSize{ .width = 5, .height = 1 }, textSize("\x1b[31mhello\x1b[0m", 80));
+    try testing.expectEqual(TextSize{ .width = 5, .height = 1 }, try textSize("\x1b[31mhello\x1b[0m", 80));
 }
 
 test "textSize: consistent with wrap line count and max width" {
@@ -469,7 +476,7 @@ test "textSize: consistent with wrap line count and max width" {
     const text = "你好吗";
     const max_w: u32 = 4;
     const lines = try wrap(text, max_w, &lines_buf);
-    const size = textSize(text, max_w);
+    const size = try textSize(text, max_w);
 
     try testing.expectEqual(@as(u32, @intCast(lines.len)), size.height);
     var max_w_seen: u32 = 0;
@@ -477,4 +484,8 @@ test "textSize: consistent with wrap line count and max width" {
         if (line.width > max_w_seen) max_w_seen = line.width;
     }
     try testing.expectEqual(max_w_seen, size.width);
+}
+
+test "textSize: rejects zero width" {
+    try testing.expectError(error.InvalidWidth, textSize("hello", 0));
 }
