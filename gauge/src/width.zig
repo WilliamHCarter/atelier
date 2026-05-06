@@ -72,6 +72,8 @@ fn binarySearchRanges(comptime Range: type, table: []const Range, codepoint: u21
 pub fn width(bytes: []const u8) u32 {
     std.debug.assert(bytes.len <= std.math.maxInt(u32)); // precondition: length fits in u32
 
+    if (asciiWidth(bytes)) |ascii_width| return ascii_width;
+
     var total: u32 = 0;
     var i: u32 = 0;
     while (i < bytes.len) {
@@ -90,6 +92,59 @@ pub fn width(bytes: []const u8) u32 {
     }
 
     // Each UTF-8 byte contributes at most 1 column, so total never exceeds byte count.
+    std.debug.assert(total <= bytes.len);
+    return total;
+}
+
+/// Fast path for ASCII-only input, including ANSI escapes. Returns null as soon
+/// as a non-ASCII byte appears so Unicode grapheme handling remains authoritative.
+inline fn isAllAscii(x: u64) bool {
+    return (x & 0x8080808080808080) == 0;
+}
+
+inline fn hasByte(x: u64, byte: u8) bool {
+    const splat = @as(u64, @intCast(byte)) * 0x0101010101010101;
+    const cmp = x ^ splat;
+    return ((cmp -% 0x0101010101010101) & ~cmp & 0x8080808080808080) != 0;
+}
+
+inline fn printableWidth(b: u8) u32 {
+    return @intFromBool(@as(u8, b -% 0x20) <= 0x5e);
+}
+
+fn asciiWidth(bytes: []const u8) ?u32 {
+    std.debug.assert(bytes.len <= std.math.maxInt(u32));
+
+    var total: u32 = 0;
+    var i: u32 = 0;
+
+    while (i < bytes.len) {
+        if (i + 8 <= bytes.len) {
+            const chunk: u64 = @bitCast(bytes[i..][0..8].*);
+            if (isAllAscii(chunk) and !hasByte(chunk, 0x1b)) {
+                inline for (0..8) |offset| {
+                    total += printableWidth(bytes[i + offset]);
+                }
+                i += 8;
+                continue;
+            }
+        }
+
+        const byte = bytes[i];
+        if (byte >= 0x80) return null;
+
+        if (byte == 0x1b) {
+            const seq_len = ansi.escapeSequenceLen(bytes, i);
+            if (seq_len > 0) {
+                i += seq_len;
+                continue;
+            }
+        }
+
+        total += printableWidth(byte);
+        i += 1;
+    }
+
     std.debug.assert(total <= bytes.len);
     return total;
 }
@@ -208,4 +263,10 @@ test "width: ANSI OSC hyperlink is ignored" {
 test "width: mixed styled and plain text" {
     // "\x1b[31m" + "你好" + "\x1b[0m" — only CJK contributes to width
     try testing.expectEqual(@as(u32, 4), width("\x1b[31m你好\x1b[0m"));
+}
+
+test "width: ASCII fast path keeps controls zero-width" {
+    try testing.expectEqual(@as(u32, 2), width("A\nB"));
+    try testing.expectEqual(@as(u32, 2), width("A\tB"));
+    try testing.expectEqual(@as(u32, 2), width("A\x01B"));
 }
