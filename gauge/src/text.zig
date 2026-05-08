@@ -52,6 +52,19 @@ fn WrapContext(comptime mode: WrapMode) type {
         last_break: ?BreakPoint = null,
         trim_break_spaces: bool = false,
 
+        fn setLineState(
+            self: *Self,
+            start: u32,
+            width: u32,
+            last_break: ?BreakPoint,
+            trim_break_spaces: bool,
+        ) void {
+            self.line_start = start;
+            self.line_width = width;
+            self.last_break = last_break;
+            self.trim_break_spaces = trim_break_spaces;
+        }
+
         fn run(self: *Self) Error!void {
             std.debug.assert(self.max_width > 0);
             std.debug.assert(self.bytes.len <= std.math.maxInt(u32));
@@ -111,10 +124,7 @@ fn WrapContext(comptime mode: WrapMode) type {
 
             try self.emitLine(self.line_start, self.i, self.line_width);
             self.i += 1;
-            self.line_start = self.i;
-            self.line_width = 0;
-            self.last_break = null;
-            self.trim_break_spaces = false;
+            self.setLineState(self.i, 0, null, false);
 
             std.debug.assert(self.line_start <= self.bytes.len);
         }
@@ -126,11 +136,13 @@ fn WrapContext(comptime mode: WrapMode) type {
             if (self.last_break) |break_point| {
                 if (break_point.start > self.line_start) {
                     try self.emitLine(self.line_start, break_point.start, break_point.width_before);
-                    self.line_start = break_point.end;
                     std.debug.assert(self.line_width >= break_point.width_after);
-                    self.line_width -= break_point.width_after;
-                    self.last_break = null;
-                    self.trim_break_spaces = true;
+                    self.setLineState(
+                        break_point.end,
+                        self.line_width - break_point.width_after,
+                        null,
+                        true,
+                    );
                     return;
                 }
             }
@@ -138,28 +150,19 @@ fn WrapContext(comptime mode: WrapMode) type {
             if (isBreakSpace(self.bytes[self.i .. self.i + grapheme_len])) {
                 try self.emitLine(self.line_start, self.i, self.line_width);
                 self.i += grapheme_len;
-                self.line_start = self.i;
-                self.line_width = 0;
-                self.last_break = null;
-                self.trim_break_spaces = true;
+                self.setLineState(self.i, 0, null, true);
                 return;
             }
 
             if (self.i == self.line_start) {
                 try self.emitLine(self.line_start, self.i + grapheme_len, grapheme_width);
                 self.i += grapheme_len;
-                self.line_start = self.i;
-                self.line_width = 0;
-                self.last_break = null;
-                self.trim_break_spaces = false;
+                self.setLineState(self.i, 0, null, false);
                 return;
             }
 
             try self.emitLine(self.line_start, self.i, self.line_width);
-            self.line_start = self.i;
-            self.line_width = 0;
-            self.last_break = null;
-            self.trim_break_spaces = false;
+            self.setLineState(self.i, 0, null, false);
 
             std.debug.assert(self.line_start <= self.bytes.len);
         }
