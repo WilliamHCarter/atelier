@@ -28,8 +28,6 @@ pub fn step(bytes: []const u8) ?StepResult {
     std.debug.assert(bytes.len <= std.math.maxInt(u32));
     if (bytes.len == 0) return null;
 
-    if (asciiStep(bytes)) |result| return result;
-
     var i: u32 = 0;
 
     // Decode the first codepoint. Invalid UTF-8 → single-byte cluster, width 0.
@@ -140,33 +138,6 @@ pub fn step(bytes: []const u8) ?StepResult {
     std.debug.assert(i > 0); // postcondition: always advances at least one byte
     std.debug.assert(i <= bytes.len); // postcondition: never overruns input
     return .{ .grapheme = .{ .bytes = bytes[0..i], .width = cluster_width }, .rest = bytes[i..] };
-}
-
-fn asciiStep(bytes: []const u8) ?StepResult {
-    std.debug.assert(bytes.len > 0);
-    std.debug.assert(bytes.len <= std.math.maxInt(u32));
-
-    const first = bytes[0];
-    if (first >= 0x80) return null;
-
-    // CRLF is one grapheme cluster per GB3.
-    if (first == '\r' and bytes.len >= 2 and bytes[1] == '\n') {
-        return .{
-            .grapheme = .{ .bytes = bytes[0..2], .width = 0 },
-            .rest = bytes[2..],
-        };
-    }
-
-    // A following non-ASCII codepoint may be Extend/ZWJ/SpacingMark, so defer to
-    // the full state machine to keep clusters like "A\u{0300}" intact.
-    if (bytes.len >= 2 and bytes[1] >= 0x80) return null;
-
-    const width_value: u8 = if (first >= 0x20 and first <= 0x7e) 1 else 0;
-    std.debug.assert(width_value <= 1);
-    return .{
-        .grapheme = .{ .bytes = bytes[0..1], .width = width_value },
-        .rest = bytes[1..],
-    };
 }
 
 /// Iterator over grapheme clusters. Zero allocation; yields slices into the source string.
@@ -329,17 +300,6 @@ test "graphemes: ASCII — each character is its own cluster" {
     const i = iter.next().?;
     try testing.expectEqualStrings("i", i.bytes);
     _ = iter.next().?; // '!'
-    try testing.expect(iter.next() == null);
-}
-
-test "graphemes: ASCII CRLF fast path remains one cluster" {
-    var iter = graphemes("\r\nA");
-    const crlf = iter.next().?;
-    try testing.expectEqualStrings("\r\n", crlf.bytes);
-    try testing.expectEqual(@as(u8, 0), crlf.width);
-    const a = iter.next().?;
-    try testing.expectEqualStrings("A", a.bytes);
-    try testing.expectEqual(@as(u8, 1), a.width);
     try testing.expect(iter.next() == null);
 }
 

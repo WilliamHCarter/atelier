@@ -23,3 +23,36 @@ jobs:
 
       - name: Test
         run: cd gauge && zig build test
+
+  bench-regression:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout atelier (current commit)
+        uses: actions/checkout@v4
+        with:
+          path: atelier
+
+      - name: Checkout gauge-bench
+        uses: actions/checkout@v4
+        with:
+          repository: WilliamHCarter/gauge-bench
+          path: gauge-bench
+
+      - name: Install Zig 0.14.0
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.14.0
+
+      - name: Run Gauge benchmark
+        run: |
+          cd gauge-bench
+          zig build bench -Doptimize=ReleaseFast -- --format json > /tmp/gauge-bench-current.json
+
+      - name: Check benchmark regression
+        run: |
+          cd gauge-bench
+          jq -n \
+            --argjson threshold 1.20 \
+            --slurpfile baseline baselines/gauge-bench-macos-arm64-releasefast.json \
+            --slurpfile current /tmp/gauge-bench-current.json \
+            -f check-regression.jq
